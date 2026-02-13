@@ -1,43 +1,53 @@
 #!/bin/bash
 
-# ================= COLORS =================
+# ================== COLORS ==================
 RED='\033[1;31m'
 GREEN='\033[1;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[1;34m'
+MAGENTA='\033[1;35m'
 CYAN='\033[1;36m'
+WHITE='\033[1;37m'
 NC='\033[0m'
 
 clear
 
-echo -e "${CYAN}==============================================${NC}"
-echo -e "${GREEN}        SSH Two IP Auto Installer${NC}"
-echo -e "${CYAN}==============================================${NC}"
+echo -e "${CYAN}══════════════════════════════════════════════${NC}"
+echo -e "${GREEN}🚀  AliFlash SSH Two IP Auto Installer  🚀${NC}"
+echo -e "${CYAN}══════════════════════════════════════════════${NC}"
 echo ""
 
-# ================= INPUT =================
-echo -ne "${YELLOW}Enter PRIMARY IP: ${NC}"
+# ================== UPDATE ==================
+echo -e "${BLUE}📦 Updating system...${NC}"
+sudo apt update -y >/dev/null 2>&1
+echo -e "${GREEN}✔ System updated${NC}"
+echo ""
+
+# ================== INPUT ==================
+echo -e "${YELLOW}🔧 Enter Configuration Details:${NC}"
+echo -ne "${WHITE}🌍 Primary IP: ${NC}"
 read PRIMARY_IP
 
-echo -ne "${YELLOW}Enter SECONDARY IP: ${NC}"
+echo -ne "${WHITE}🌍 Secondary IP: ${NC}"
 read SECONDARY_IP
 
-echo -ne "${YELLOW}Enter SSH PORT: ${NC}"
+echo -ne "${WHITE}🔐 SSH Port: ${NC}"
 read SSH_PORT
 
-echo -ne "${YELLOW}Enter LOCAL PORT: ${NC}"
+echo -ne "${WHITE}📡 Local Port: ${NC}"
 read PORT_LOCAL
 
-echo -ne "${YELLOW}Enter REMOTE PORT: ${NC}"
+echo -ne "${WHITE}📡 Remote Port: ${NC}"
 read PORT_REMOTE
 
-echo -ne "${YELLOW}Enter OUTSIDE SERVER ROOT PASSWORD: ${NC}"
+echo -ne "${WHITE}🔑 Outside Server Root Password: ${NC}"
 read -s SERVER_PASS
 echo ""
+echo ""
 
-echo -e "${BLUE}Configuring SSH keepalive...${NC}"
+# ================== SSH CONFIG ==================
+echo -e "${BLUE}⚙️  Configuring SSH KeepAlive...${NC}"
 
-# ================= SSH CONFIG =================
 cat >> /etc/ssh/sshd_config <<EOF
 
 ClientAliveInterval 60
@@ -46,9 +56,17 @@ TCPKeepAlive yes
 EOF
 
 systemctl restart ssh
+echo -e "${GREEN}✔ SSH Config Updated${NC}"
 
-# ================= SYSTEM LIMIT =================
-echo -e "${BLUE}Setting system limits...${NC}"
+# ================== LIMITS ==================
+echo -e "${BLUE}📈 Increasing File Limits...${NC}"
+
+cat >> /etc/security/limits.conf <<EOF
+* soft nofile 1048576
+* hard nofile 1048576
+root soft nofile 1048576
+root hard nofile 1048576
+EOF
 
 echo "DefaultLimitNOFILE=1048576" >> /etc/systemd/system.conf
 echo "DefaultLimitNOFILE=1048576" >> /etc/systemd/user.conf
@@ -60,18 +78,21 @@ cat > /etc/systemd/system/ssh.service.d/override.conf <<EOF
 LimitNOFILE=1048576
 EOF
 
-# ================= SSH KEY =================
-echo -e "${BLUE}Generating SSH key...${NC}"
-yes "" | ssh-keygen -t rsa -b 4096 -N "" -f ~/.ssh/id_rsa
+echo -e "${GREEN}✔ Limits Configured${NC}"
 
-echo -e "${BLUE}Copying SSH key to primary server...${NC}"
+# ================== SSH KEY ==================
+echo -e "${BLUE}🔐 Generating SSH Key...${NC}"
+yes "" | ssh-keygen -t rsa -b 4096 -N "" -f ~/.ssh/id_rsa >/dev/null 2>&1
 
 apt install -y sshpass >/dev/null 2>&1
 
-sshpass -p "$SERVER_PASS" ssh-copy-id -o StrictHostKeyChecking=no -p ${SSH_PORT} root@${PRIMARY_IP}
+echo -e "${BLUE}📡 Sending SSH Key to Primary Server...${NC}"
+sshpass -p "$SERVER_PASS" ssh-copy-id -o StrictHostKeyChecking=no -p ${SSH_PORT} root@${PRIMARY_IP} >/dev/null 2>&1
 
-# ================= TWO_IP SCRIPT =================
-echo -e "${BLUE}Creating tunnel script...${NC}"
+echo -e "${GREEN}✔ SSH Key Installed${NC}"
+
+# ================== TWO_IP SCRIPT ==================
+echo -e "${BLUE}📝 Creating Tunnel Script...${NC}"
 
 cat > /usr/local/bin/two_ip <<EOF
 #!/bin/bash
@@ -108,9 +129,10 @@ done
 EOF
 
 chmod +x /usr/local/bin/two_ip
+echo -e "${GREEN}✔ Tunnel Script Created${NC}"
 
-# ================= CONFIG FILE =================
-echo -e "${BLUE}Creating config file...${NC}"
+# ================== CONFIG FILE ==================
+echo -e "${BLUE}📄 Creating Config File...${NC}"
 
 cat > /etc/two_ip.conf <<EOF
 PRIMARY_IP="${PRIMARY_IP}"
@@ -124,8 +146,10 @@ EOF
 chmod 600 /etc/two_ip.conf
 chown root:root /etc/two_ip.conf
 
-# ================= SERVICE =================
-echo -e "${BLUE}Creating systemd service...${NC}"
+echo -e "${GREEN}✔ Config File Created${NC}"
+
+# ================== SERVICE ==================
+echo -e "${BLUE}🔧 Creating systemd Service...${NC}"
 
 cat > /etc/systemd/system/autossh-iran.service <<EOF
 [Unit]
@@ -149,18 +173,15 @@ EOF
 
 systemctl daemon-reexec
 systemctl daemon-reload
-systemctl enable autossh-iran
+systemctl enable autossh-iran >/dev/null 2>&1
 systemctl start autossh-iran
 
-# ================= DONE =================
 echo ""
-echo -e "${GREEN}==============================================${NC}"
-echo -e "${GREEN}✔ Installation Completed Successfully${NC}"
-echo -e "${GREEN}✔ SSH KeepAlive Configured${NC}"
-echo -e "${GREEN}✔ System Limits Increased${NC}"
-echo -e "${GREEN}✔ SSH Key Installed${NC}"
-echo -e "${GREEN}✔ Tunnel Service Running${NC}"
-echo -e "${GREEN}==============================================${NC}"
-echo -e "${CYAN}Check status: systemctl status autossh-iran${NC}"
-
-Commit changes
+echo -e "${MAGENTA}══════════════════════════════════════════════${NC}"
+echo -e "${GREEN}🎉 INSTALLATION COMPLETED SUCCESSFULLY 🎉${NC}"
+echo -e "${CYAN}✔ SSH KeepAlive Enabled${NC}"
+echo -e "${CYAN}✔ System Limits Increased${NC}"
+echo -e "${CYAN}✔ SSH Key Installed${NC}"
+echo -e "${CYAN}✔ Tunnel Service Running${NC}"
+echo -e "${MAGENTA}══════════════════════════════════════════════${NC}"
+echo -e "${YELLOW}📌 Check status:${NC} systemctl status autossh-iran"
