@@ -49,29 +49,29 @@ install_script() {
 
     # ================= SSH CONFIG =================
     echo -e "${BLUE}⚙️  Configuring SSH KeepAlive...${NC}"
-    cat >> /etc/ssh/sshd_config <<EOF
+    sudo bash -c "cat >> /etc/ssh/sshd_config" <<EOF
 
 ClientAliveInterval 60
 ClientAliveCountMax 3
 TCPKeepAlive yes
 EOF
-    systemctl restart ssh
+    sudo systemctl restart ssh
     echo -e "${GREEN}✔ SSH Config Updated${NC}"
 
     # ================= LIMITS =================
     echo -e "${BLUE}📈 Increasing File Limits...${NC}"
-    cat >> /etc/security/limits.conf <<EOF
+    sudo bash -c "cat >> /etc/security/limits.conf" <<EOF
 * soft nofile 1048576
 * hard nofile 1048576
 root soft nofile 1048576
 root hard nofile 1048576
 EOF
 
-    echo "DefaultLimitNOFILE=1048576" >> /etc/systemd/system.conf
-    echo "DefaultLimitNOFILE=1048576" >> /etc/systemd/user.conf
+    echo "DefaultLimitNOFILE=1048576" | sudo tee -a /etc/systemd/system.conf >/dev/null
+    echo "DefaultLimitNOFILE=1048576" | sudo tee -a /etc/systemd/user.conf >/dev/null
 
-    mkdir -p /etc/systemd/system/ssh.service.d
-    cat > /etc/systemd/system/ssh.service.d/override.conf <<EOF
+    sudo mkdir -p /etc/systemd/system/ssh.service.d
+    sudo bash -c "cat > /etc/systemd/system/ssh.service.d/override.conf" <<EOF
 [Service]
 LimitNOFILE=1048576
 EOF
@@ -81,7 +81,7 @@ EOF
     # ================= SSH KEY =================
     echo -e "${BLUE}🔐 Generating SSH Key...${NC}"
     yes "" | ssh-keygen -t rsa -b 4096 -N "" -f ~/.ssh/id_rsa >/dev/null 2>&1
-    apt install -y sshpass >/dev/null 2>&1
+    sudo apt install -y sshpass >/dev/null 2>&1
 
     echo -e "${BLUE}📡 Sending SSH Key to Primary Server...${NC}"
     sshpass -p "$SERVER_PASS" ssh-copy-id -o StrictHostKeyChecking=no -p ${SSH_PORT} root@${PRIMARY_IP} >/dev/null 2>&1
@@ -89,7 +89,7 @@ EOF
 
     # ================= TWO_IP SCRIPT =================
     echo -e "${BLUE}📝 Creating Tunnel Script...${NC}"
-    cat > /usr/local/bin/two_ip <<EOF
+    sudo bash -c "cat > /usr/local/bin/two_ip" <<EOF
 #!/bin/bash
 
 CONFIG_FILE="/etc/two_ip.conf"
@@ -114,12 +114,12 @@ while true; do
 done
 EOF
 
-    chmod +x /usr/local/bin/two_ip
+    sudo chmod +x /usr/local/bin/two_ip
     echo -e "${GREEN}✔ Tunnel Script Created${NC}"
 
     # ================= CONFIG FILE =================
     echo -e "${BLUE}📄 Creating Config File...${NC}"
-    cat > /etc/two_ip.conf <<EOF
+    sudo bash -c "cat > /etc/two_ip.conf" <<EOF
 PRIMARY_IP="${PRIMARY_IP}"
 SECONDARY_IP="${SECONDARY_IP}"
 PORT_LOCAL="${PORT_LOCAL}"
@@ -127,13 +127,13 @@ PORT_REMOTE="${PORT_REMOTE}"
 SSH_PORT="${SSH_PORT}"
 MAX_RETRY=2
 EOF
-    chmod 600 /etc/two_ip.conf
-    chown root:root /etc/two_ip.conf
+    sudo chmod 600 /etc/two_ip.conf
+    sudo chown root:root /etc/two_ip.conf
     echo -e "${GREEN}✔ Config File Created${NC}"
 
     # ================= SERVICE =================
     echo -e "${BLUE}🔧 Creating systemd Service...${NC}"
-    cat > /etc/systemd/system/autossh-iran.service <<EOF
+    sudo bash -c "cat > /etc/systemd/system/autossh-iran.service" <<EOF
 [Unit]
 Description=SSH Tunnel Iran Two IP Failover
 After=network-online.target
@@ -153,10 +153,10 @@ LimitNOFILE=1048576
 WantedBy=multi-user.target
 EOF
 
-    systemctl daemon-reexec
-    systemctl daemon-reload
-    systemctl enable autossh-iran >/dev/null 2>&1
-    systemctl start autossh-iran
+    sudo systemctl daemon-reexec
+    sudo systemctl daemon-reload
+    sudo systemctl enable autossh-iran >/dev/null 2>&1
+    sudo systemctl start autossh-iran
 
     echo -e "${GREEN}✔ Installation Completed! Tunnel Service Running${NC}"
 }
@@ -169,25 +169,28 @@ uninstall_script() {
         return
     fi
 
-    systemctl stop autossh-iran 2>/dev/null
-    systemctl disable autossh-iran 2>/dev/null
-    systemctl daemon-reload
+    echo -e "${BLUE}🛑 Stopping services...${NC}"
+    sudo systemctl stop autossh-iran 2>/dev/null
+    sudo systemctl disable autossh-iran 2>/dev/null
+    sudo systemctl daemon-reload
 
-    rm -f /usr/local/bin/two_ip
-    rm -f /etc/two_ip.conf
-    rm -f /etc/systemd/system/autossh-iran.service
-    rm -rf /etc/systemd/system/ssh.service.d/override.conf
+    echo -e "${BLUE}🗑️ Removing files...${NC}"
+    sudo rm -f /usr/local/bin/two_ip
+    sudo rm -f /etc/two_ip.conf
+    sudo rm -f /etc/systemd/system/autossh-iran.service
+    sudo rm -rf /etc/systemd/system/ssh.service.d/override.conf
 
-    sed -i '/\* soft nofile 1048576/d' /etc/security/limits.conf
-    sed -i '/\* hard nofile 1048576/d' /etc/security/limits.conf
-    sed -i '/root soft nofile 1048576/d' /etc/security/limits.conf
-    sed -i '/root hard nofile 1048576/d' /etc/security/limits.conf
+    echo -e "${BLUE}🧹 Cleaning system limits...${NC}"
+    sudo sed -i '/\* soft nofile 1048576/d' /etc/security/limits.conf
+    sudo sed -i '/\* hard nofile 1048576/d' /etc/security/limits.conf
+    sudo sed -i '/root soft nofile 1048576/d' /etc/security/limits.conf
+    sudo sed -i '/root hard nofile 1048576/d' /etc/security/limits.conf
 
-    sed -i '/DefaultLimitNOFILE=1048576/d' /etc/systemd/system.conf
-    sed -i '/DefaultLimitNOFILE=1048576/d' /etc/systemd/user.conf
+    sudo sed -i '/DefaultLimitNOFILE=1048576/d' /etc/systemd/system.conf
+    sudo sed -i '/DefaultLimitNOFILE=1048576/d' /etc/systemd/user.conf
 
-    systemctl daemon-reexec
-    systemctl daemon-reload
+    sudo systemctl daemon-reexec
+    sudo systemctl daemon-reload
 
     echo -e "${GREEN}✔ Uninstall Completed. All files and services removed.${NC}"
 }
@@ -216,7 +219,7 @@ edit_config() {
     read -p "Remote Port [$PORT_REMOTE]: " TMP
     PORT_REMOTE=${TMP:-$PORT_REMOTE}
 
-    cat > $CONFIG_FILE <<EOF
+    sudo bash -c "cat > $CONFIG_FILE" <<EOF
 PRIMARY_IP="$PRIMARY_IP"
 SECONDARY_IP="$SECONDARY_IP"
 PORT_LOCAL="$PORT_LOCAL"
@@ -230,7 +233,7 @@ EOF
 # ================= MENU =================
 while true; do
     echo -e "${YELLOW}================ Menu ================${NC}"
-    echo -e "${YELLOW}1.${NC} Install / Re-run Installation"
+    echo -e "${YELLOW}1.${NC} Installation"
     echo -e "${YELLOW}2.${NC} Edit Config File (/etc/two_ip.conf)"
     echo -e "${YELLOW}3.${NC} Uninstall SSH-TWO"
     echo -e "${YELLOW}4.${NC} Exit"
