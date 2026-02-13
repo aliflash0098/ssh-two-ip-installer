@@ -43,7 +43,7 @@ install_script() {
     echo -ne "${WHITE}📡 Remote Port: ${NC}"
     read PORT_REMOTE
 
-    echo -ne "${WHITE}🔑 Outside Server Root Password: ${NC}"
+    echo -ne "${MAGENTA}🔑 Password for Outside Server (root): ${NC}"
     read -s SERVER_PASS
     echo ""
 
@@ -230,21 +230,29 @@ EOF
     echo -e "${GREEN}✔ Config updated successfully!${NC}"
 }
 
+restart_tunnel() {
+    echo -e "${BLUE}🔄 Restarting SSH Tunnel...${NC}"
+    sudo systemctl restart autossh-iran
+    echo -e "${GREEN}✔ Tunnel Restarted${NC}"
+}
+
 # ================= MENU =================
 while true; do
     echo -e "${YELLOW}================ Menu ================${NC}"
-    echo -e "${YELLOW}1.${NC} Installation"
-    echo -e "${YELLOW}2.${NC} Edit Config File (/etc/two_ip.conf)"
-    echo -e "${YELLOW}3.${NC} Uninstall SSH-TWO"
-    echo -e "${YELLOW}4.${NC} Exit"
-    echo -ne "${BLUE}Choose an option: ${NC}"
+    echo -e "${BLUE}1.${NC} Installation"
+    echo -e "${MAGENTA}2.${NC} Edit Config File (/etc/two_ip.conf)"
+    echo -e "${CYAN}3.${NC} Restart SSH-Tunnel"
+    echo -e "${RED}4.${NC} Uninstall SSH-TWO"
+    echo -e "${GREEN}5.${NC} Exit"
+    echo -ne "${WHITE}Choose an option: ${NC}"
     read CHOICE
 
     case $CHOICE in
         1) install_script ;;
         2) edit_config ;;
-        3) uninstall_script ;;
-        4) echo -e "${GREEN}👋 Exiting...${NC}"; exit 0 ;;
+        3) restart_tunnel ;;
+        4) uninstall_script ;;
+        5) echo -e "${GREEN}👋 Exiting...${NC}"; exit 0 ;;
         *) echo -e "${RED}Invalid option. Try again.${NC}" ;;
     esac
 done
