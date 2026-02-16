@@ -22,32 +22,21 @@ echo ""
 # ================= FUNCTIONS =================
 
 install_script() {
+
     echo -e "${BLUE}📦 Updating system...${NC}"
     sudo apt update -y >/dev/null 2>&1
     echo -e "${GREEN}✔ System updated${NC}\n"
 
-    # ================== INPUT ==================
     echo -e "${YELLOW}🔧 Enter Configuration Details:${NC}"
-    echo -ne "${WHITE}🌍 Primary IP: ${NC}"
-    read PRIMARY_IP
-
-    echo -ne "${WHITE}🌍 Secondary IP: ${NC}"
-    read SECONDARY_IP
-
-    echo -ne "${WHITE}🔐 SSH Port: ${NC}"
-    read SSH_PORT
-
-    echo -ne "${WHITE}📡 Local Port: ${NC}"
-    read PORT_LOCAL
-
-    echo -ne "${WHITE}📡 Remote Port: ${NC}"
-    read PORT_REMOTE
-
-    echo -ne "${MAGENTA}🔑 Password for Outside Server (root): ${NC}"
-    read -s SERVER_PASS
+    read -p "🌍 Primary IP: " PRIMARY_IP
+    read -p "🌍 Secondary IP: " SECONDARY_IP
+    read -p "🔐 SSH Port: " SSH_PORT
+    read -p "📡 Local Port: " PORT_LOCAL
+    read -p "📡 Remote Port: " PORT_REMOTE
+    read -s -p "🔑 Password for Outside Server (root): " SERVER_PASS
     echo ""
 
-    # ================= SSH CONFIG =================
+    # ================= SSH KeepAlive =================
     echo -e "${BLUE}⚙️  Configuring SSH KeepAlive...${NC}"
     sudo bash -c "cat >> /etc/ssh/sshd_config" <<EOF
 
@@ -58,34 +47,13 @@ EOF
     sudo systemctl restart ssh
     echo -e "${GREEN}✔ SSH Config Updated${NC}"
 
-    # ================= LIMITS =================
-    echo -e "${BLUE}📈 Increasing File Limits...${NC}"
-    sudo bash -c "cat >> /etc/security/limits.conf" <<EOF
-* soft nofile 1048576
-* hard nofile 1048576
-root soft nofile 1048576
-root hard nofile 1048576
-EOF
-
-    echo "DefaultLimitNOFILE=1048576" | sudo tee -a /etc/systemd/system.conf >/dev/null
-    echo "DefaultLimitNOFILE=1048576" | sudo tee -a /etc/systemd/user.conf >/dev/null
-
-    sudo mkdir -p /etc/systemd/system/ssh.service.d
-    sudo bash -c "cat > /etc/systemd/system/ssh.service.d/override.conf" <<EOF
-[Service]
-LimitNOFILE=1048576
-EOF
-
-    echo -e "${GREEN}✔ Limits Configured${NC}"
-
     # ================= SSH KEY =================
     echo -e "${BLUE}🔐 Generating SSH Key...${NC}"
     yes "" | ssh-keygen -t rsa -b 4096 -N "" -f ~/.ssh/id_rsa >/dev/null 2>&1
     sudo apt install -y sshpass >/dev/null 2>&1
 
     echo -e "${BLUE}📡 Sending SSH Key to Primary Server...${NC}"
-    sshpass -p "$SERVER_PASS" ssh-copy-id -o StrictHostKeyChecking=no -p ${SSH_PORT} root@${PRIMARY_IP} >/dev/null 2>&1
-    echo -e "${GREEN}✔ SSH Key Installed${NC}"
+    sshpass -p "$SERVER_PASS" ssh-copy-id -o StrictHostKeyChecking=no -p ${SSH_PORT} root@${PRIMARY_IP}
 
     # ================= TWO_IP SCRIPT =================
     echo -e "${BLUE}📝 Creating Tunnel Script...${NC}"
@@ -97,19 +65,39 @@ CONFIG_FILE="/etc/two_ip.conf"
 connect_ssh() {
     IP=\$1
     echo "Trying \$IP ..."
-    /usr/bin/ssh -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=2 -o TCPKeepAlive=no -o ExitOnForwardFailure=yes -N -L 0.0.0.0:${PORT_LOCAL}:127.0.0.1:${PORT_REMOTE} -p ${SSH_PORT} root@\${IP}
+    
+    /usr/bin/ssh \\
+    -o ConnectTimeout=10 \\
+    -o ServerAliveInterval=10 \\
+    -o ServerAliveCountMax=2 \\
+    -o TCPKeepAlive=no \\
+    -o ExitOnForwardFailure=yes \\
+    -N -L 0.0.0.0:\${PORT_LOCAL}:127.0.0.1:\${PORT_REMOTE} \\
+    -p \${SSH_PORT} root@\${IP}
 }
 
 while true; do
+
     if [ -f "\$CONFIG_FILE" ]; then
         source "\$CONFIG_FILE"
     else
-        echo "Config file not found!"
+        echo "Config file \$CONFIG_FILE not found!"
         sleep 10
         continue
     fi
-    connect_ssh \$PRIMARY_IP || connect_ssh \$SECONDARY_IP
-    echo "Tunnel disconnected. Restarting..."
+
+    RETRY=0
+    while [ \$RETRY -lt \$MAX_RETRY ]; do
+        connect_ssh \$PRIMARY_IP
+        RETRY=\$((RETRY+1))
+        echo "Primary failed. Retry \$RETRY"
+        sleep 2
+    done
+
+    echo "Switching to SECONDARY IP..."
+    connect_ssh \$SECONDARY_IP
+
+    echo "Secondary disconnected. Restarting cycle..."
     sleep 2
 done
 EOF
@@ -125,8 +113,9 @@ SECONDARY_IP="${SECONDARY_IP}"
 PORT_LOCAL="${PORT_LOCAL}"
 PORT_REMOTE="${PORT_REMOTE}"
 SSH_PORT="${SSH_PORT}"
-MAX_RETRY=2
+MAX_RETRY=3
 EOF
+
     sudo chmod 600 /etc/two_ip.conf
     sudo chown root:root /etc/two_ip.conf
     echo -e "${GREEN}✔ Config File Created${NC}"
@@ -145,89 +134,17 @@ User=root
 ExecStart=/usr/local/bin/two_ip
 Restart=always
 RestartSec=3
-TimeoutStopSec=5
-KillMode=mixed
 LimitNOFILE=1048576
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-    sudo systemctl daemon-reexec
     sudo systemctl daemon-reload
     sudo systemctl enable autossh-iran >/dev/null 2>&1
-    sudo systemctl start autossh-iran
+    sudo systemctl restart autossh-iran
 
     echo -e "${GREEN}✔ Installation Completed! Tunnel Service Running${NC}"
-}
-
-uninstall_script() {
-    echo -e "${RED}🗑️  Running Uninstall...${NC}"
-    read -p "⚠️  Are you sure? [y/N]: " CONFIRM
-    if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
-        echo -e "${GREEN}✅ Uninstall cancelled.${NC}"
-        return
-    fi
-
-    echo -e "${BLUE}🛑 Stopping services...${NC}"
-    sudo systemctl stop autossh-iran 2>/dev/null
-    sudo systemctl disable autossh-iran 2>/dev/null
-    sudo systemctl daemon-reload
-
-    echo -e "${BLUE}🗑️ Removing files...${NC}"
-    sudo rm -f /usr/local/bin/two_ip
-    sudo rm -f /etc/two_ip.conf
-    sudo rm -f /etc/systemd/system/autossh-iran.service
-    sudo rm -rf /etc/systemd/system/ssh.service.d/override.conf
-
-    echo -e "${BLUE}🧹 Cleaning system limits...${NC}"
-    sudo sed -i '/\* soft nofile 1048576/d' /etc/security/limits.conf
-    sudo sed -i '/\* hard nofile 1048576/d' /etc/security/limits.conf
-    sudo sed -i '/root soft nofile 1048576/d' /etc/security/limits.conf
-    sudo sed -i '/root hard nofile 1048576/d' /etc/security/limits.conf
-
-    sudo sed -i '/DefaultLimitNOFILE=1048576/d' /etc/systemd/system.conf
-    sudo sed -i '/DefaultLimitNOFILE=1048576/d' /etc/systemd/user.conf
-
-    sudo systemctl daemon-reexec
-    sudo systemctl daemon-reload
-
-    echo -e "${GREEN}✔ Uninstall Completed. All files and services removed.${NC}"
-}
-
-edit_config() {
-    if [ ! -f "$CONFIG_FILE" ]; then
-        echo -e "${RED}Config file not found!${NC}"
-        sleep 2
-        return
-    fi
-    echo -e "${CYAN}Press Enter to keep the current value${NC}"
-    source $CONFIG_FILE
-
-    read -p "Primary IP [$PRIMARY_IP]: " TMP
-    PRIMARY_IP=${TMP:-$PRIMARY_IP}
-
-    read -p "Secondary IP [$SECONDARY_IP]: " TMP
-    SECONDARY_IP=${TMP:-$SECONDARY_IP}
-
-    read -p "SSH Port [$SSH_PORT]: " TMP
-    SSH_PORT=${TMP:-$SSH_PORT}
-
-    read -p "Local Port [$PORT_LOCAL]: " TMP
-    PORT_LOCAL=${TMP:-$PORT_LOCAL}
-
-    read -p "Remote Port [$PORT_REMOTE]: " TMP
-    PORT_REMOTE=${TMP:-$PORT_REMOTE}
-
-    sudo bash -c "cat > $CONFIG_FILE" <<EOF
-PRIMARY_IP="$PRIMARY_IP"
-SECONDARY_IP="$SECONDARY_IP"
-PORT_LOCAL="$PORT_LOCAL"
-PORT_REMOTE="$PORT_REMOTE"
-SSH_PORT="$SSH_PORT"
-MAX_RETRY=2
-EOF
-    echo -e "${GREEN}✔ Config updated successfully!${NC}"
 }
 
 restart_tunnel() {
@@ -238,21 +155,17 @@ restart_tunnel() {
 
 # ================= MENU =================
 while true; do
+    echo ""
     echo -e "${YELLOW}================ Menu ================${NC}"
     echo -e "${BLUE}1.${NC} Installation"
-    echo -e "${MAGENTA}2.${NC} Edit Config File (/etc/two_ip.conf)"
-    echo -e "${CYAN}3.${NC} Restart SSH-Tunnel"
-    echo -e "${RED}4.${NC} Uninstall SSH-TWO"
-    echo -e "${GREEN}5.${NC} Exit"
-    echo -ne "${WHITE}Choose an option: ${NC}"
-    read CHOICE
+    echo -e "${CYAN}2.${NC} Restart SSH-Tunnel"
+    echo -e "${GREEN}3.${NC} Exit"
+    read -p "Choose an option: " CHOICE
 
-    case $CHOICE in
+    case \$CHOICE in
         1) install_script ;;
-        2) edit_config ;;
-        3) restart_tunnel ;;
-        4) uninstall_script ;;
-        5) echo -e "${GREEN}👋 Exiting...${NC}"; exit 0 ;;
+        2) restart_tunnel ;;
+        3) echo -e "${GREEN}👋 Exiting...${NC}"; exit 0 ;;
         *) echo -e "${RED}Invalid option. Try again.${NC}" ;;
     esac
 done
