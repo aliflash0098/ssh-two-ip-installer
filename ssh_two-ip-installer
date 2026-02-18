@@ -1,196 +1,213 @@
 #!/bin/bash
 
-# ================= COLORS =================
-RED='\033[1;31m'
-GREEN='\033[1;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[1;34m'
-CYAN='\033[1;36m'
-NC='\033[0m'
-
-CONFIG_FILE="/etc/two_ip.conf"
-LOG_FILE="/var/log/two_ip.log"
-
 clear
-echo -e "${CYAN}==============================================${NC}"
-echo -e "${GREEN}        🚀 SSH-TWO Professional Manager 🚀${NC}"
-echo -e "${CYAN}==============================================${NC}"
 
-# ================= FUNCTIONS =================
-
-check_root() {
-if [[ $EUID -ne 0 ]]; then
- echo -e "${RED}Run as root${NC}"
- exit 1
-fi
-}
-
-install_script() {
-
-echo -e "${BLUE}Updating system...${NC}"
-apt update -y >/dev/null 2>&1
-
-echo -e "${YELLOW}Enter Config:${NC}"
-read -p "Primary IP: " PRIMARY_IP
-read -p "Secondary IP: " SECONDARY_IP
-read -p "SSH Port: " SSH_PORT
-read -p "Local Port: " PORT_LOCAL
-read -p "Remote Port: " PORT_REMOTE
-read -s -p "Root Password (Primary): " SERVER_PASS
+echo "=============================================="
+echo "        Two IP Tunnel Auto Installer"
+echo "=============================================="
 echo ""
 
-# SSH KeepAlive only if not exist
-grep -q "ClientAliveInterval" /etc/ssh/sshd_config || cat >> /etc/ssh/sshd_config <<EOF
+# Update server
+apt update -y && apt upgrade -y
 
+# install requirements
+apt install -y sshpass
+
+echo ""
+echo "--------- تنظیمات سرور خارج ---------"
+
+read -p "IP PRIMARY خارج: " PRIMARY_IP
+read -p "IP SECONDARY خارج: " SECONDARY_IP
+read -p "SSH PORT خارج: " SSH_PORT
+read -p "LOCAL PORT خارج: " PORT_LOCAL
+read -p "REMOTE PORT خارج: " PORT_REMOTE
+read -p "PASSWORD سرور خارج: " PASSWORD
+
+SSH_PORT=${SSH_PORT:-3000}
+PORT_LOCAL=${PORT_LOCAL:-42974}
+PORT_REMOTE=${PORT_REMOTE:-42974}
+
+echo ""
+echo "Generating SSH Key..."
+
+yes "" | ssh-keygen -t rsa -b 4096
+
+echo ""
+echo "Copy SSH Key To Server..."
+
+sshpass -p "$PASSWORD" ssh-copy-id -p $SSH_PORT -o StrictHostKeyChecking=no root@$PRIMARY_IP
+
+########################################
+# sshd config
+########################################
+
+cat >> /etc/ssh/sshd_config <<EOF
+
+port 3000
 ClientAliveInterval 60
 ClientAliveCountMax 3
 TCPKeepAlive yes
 EOF
 
-systemctl restart ssh
+########################################
+# limits
+########################################
 
-# SSH Key check
-if [ ! -f ~/.ssh/id_rsa ]; then
-echo -e "${BLUE}Generating SSH Key...${NC}"
-ssh-keygen -t rsa -b 4096 -N "" -f ~/.ssh/id_rsa
-fi
+cat >> /etc/security/limits.conf <<EOF
 
-apt install sshpass -y >/dev/null 2>&1
+* soft nofile 1048576
+* hard nofile 1048576
+root soft nofile 1048576
+root hard nofile 1048576
+EOF
 
-echo -e "${BLUE}Sending key...${NC}"
-sshpass -p "$SERVER_PASS" ssh-copy-id -o StrictHostKeyChecking=no -p ${SSH_PORT} root@${PRIMARY_IP}
+########################################
+# systemd limits
+########################################
 
-# ================= SCRIPT =================
+echo "DefaultLimitNOFILE=1048576" >> /etc/systemd/system.conf
+echo "DefaultLimitNOFILE=1048576" >> /etc/systemd/user.conf
 
-cat > /usr/local/bin/two_ip <<'EOF'
+mkdir -p /etc/systemd/system/ssh.service.d
+
+cat > /etc/systemd/system/ssh.service.d/override.conf <<EOF
+[Service]
+LimitNOFILE=1048576
+EOF
+
+########################################
+# two_ip script
+########################################
+
+cat > /usr/local/bin/two_ip <<EOF
 #!/bin/bash
 
 CONFIG_FILE="/etc/two_ip.conf"
-LOG_FILE="/var/log/two_ip.log"
 
-log(){
-echo "$(date '+%F %T') | $1" >> $LOG_FILE
+connect_ssh() {
+    IP=\$1
+    echo "Trying \$IP ..."
+    
+    /usr/bin/ssh \
+    -o ConnectTimeout=10 \
+    -o ServerAliveInterval=10 \
+    -o ServerAliveCountMax=2 \
+    -o TCPKeepAlive=no \
+    -o ExitOnForwardFailure=yes \
+    -N -L 0.0.0.0:\${PORT_LOCAL}:127.0.0.1:\${PORT_REMOTE} \
+    -p \${SSH_PORT} root@\${IP}
 }
 
-check_ip(){
-ping -c1 -W2 $1 >/dev/null 2>&1
-}
+while true; do
 
-connect(){
-IP=$1
+    if [ -f "\$CONFIG_FILE" ]; then
+        source "\$CONFIG_FILE"
+    else
+        echo "Config file not found!"
+        sleep 10
+        continue
+    fi
 
-log "Connecting to $IP"
+    RETRY=0
+    while [ \$RETRY -lt \$MAX_RETRY ]; do
+        connect_ssh \$PRIMARY_IP
+        RETRY=\$((RETRY+1))
+        sleep 2
+    done
 
-ssh \
--o ConnectTimeout=10 \
--o ServerAliveInterval=15 \
--o ServerAliveCountMax=2 \
--o ExitOnForwardFailure=yes \
--N -L 0.0.0.0:${PORT_LOCAL}:127.0.0.1:${PORT_REMOTE} \
--p ${SSH_PORT} root@${IP}
-}
-
-while true
-do
-
-source $CONFIG_FILE
-
-if check_ip $PRIMARY_IP; then
-log "Primary OK"
-connect $PRIMARY_IP
-else
-log "Primary DOWN"
-fi
-
-log "Switching to secondary"
-
-if check_ip $SECONDARY_IP; then
-connect $SECONDARY_IP
-else
-log "Secondary DOWN"
-sleep 5
-fi
-
-sleep 2
-
+    connect_ssh \$SECONDARY_IP
+    sleep 2
 done
 EOF
 
 chmod +x /usr/local/bin/two_ip
 
-# ================= CONFIG =================
+########################################
+# config file
+########################################
 
-cat > $CONFIG_FILE <<EOF
-PRIMARY_IP="${PRIMARY_IP}"
-SECONDARY_IP="${SECONDARY_IP}"
-PORT_LOCAL="${PORT_LOCAL}"
-PORT_REMOTE="${PORT_REMOTE}"
-SSH_PORT="${SSH_PORT}"
+cat > /etc/two_ip.conf <<EOF
+PRIMARY_IP="$PRIMARY_IP"
+SECONDARY_IP="$SECONDARY_IP"
+PORT_LOCAL="$PORT_LOCAL"
+PORT_REMOTE="$PORT_REMOTE"
+SSH_PORT="$SSH_PORT"
+MAX_RETRY=2
 EOF
 
-chmod 600 $CONFIG_FILE
+########################################
+# service
+########################################
 
-# ================= SERVICE =================
-
-cat > /etc/systemd/system/twoip.service <<EOF
+cat > /etc/systemd/system/autossh-iran.service <<EOF
 [Unit]
-Description=SSH Tunnel Two IP Failover
+Description=SSH Tunnel Iran Two IP Failover
 After=network-online.target
+Wants=network-online.target
 
 [Service]
+Type=simple
+User=root
 ExecStart=/usr/local/bin/two_ip
 Restart=always
 RestartSec=3
+TimeoutStopSec=5
+KillMode=mixed
 LimitNOFILE=1048576
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
+########################################
+# setup script
+########################################
+
+cat > /usr/local/bin/setup-two-ip.sh <<EOF
+#!/bin/bash
+
+CONFIG_FILE="/etc/two_ip.conf"
+
+clear
+
+echo "Two IP Config Setup"
+
+read -p "PRIMARY IP: " PRIMARY_IP
+read -p "SECONDARY IP: " SECONDARY_IP
+read -p "SSH PORT: " SSH_PORT
+read -p "LOCAL PORT: " PORT_LOCAL
+read -p "REMOTE PORT: " PORT_REMOTE
+
+SSH_PORT=\${SSH_PORT:-3000}
+PORT_LOCAL=\${PORT_LOCAL:-42974}
+PORT_REMOTE=\${PORT_REMOTE:-42974}
+
+cat > \$CONFIG_FILE <<EOL
+PRIMARY_IP="\$PRIMARY_IP"
+SECONDARY_IP="\$SECONDARY_IP"
+PORT_LOCAL="\$PORT_LOCAL"
+PORT_REMOTE="\$PORT_REMOTE"
+SSH_PORT="\$SSH_PORT"
+MAX_RETRY=2
+EOL
+
+echo "Done"
+EOF
+
+chmod +x /usr/local/bin/setup-two-ip.sh
+
+########################################
+# restart services
+########################################
+
 systemctl daemon-reload
-systemctl enable twoip
-systemctl restart twoip
-
-echo -e "${GREEN}INSTALL DONE${NC}"
-}
-
-restart_tunnel(){
-systemctl restart twoip
-echo -e "${GREEN}Restarted${NC}"
-}
-
-stop_tunnel(){
-systemctl stop twoip
-echo -e "${RED}Stopped${NC}"
-}
-
-status_tunnel(){
-systemctl status twoip --no-pager
-}
-
-# ================= MENU =================
-
-check_root
-
-while true
-do
+systemctl daemon-reexec
+systemctl restart ssh
+systemctl enable autossh-iran
+systemctl start autossh-iran
+systemctl restart autossh-iran
 
 echo ""
-echo -e "${YELLOW}============== MENU ==============${NC}"
-echo "1 - Install"
-echo "2 - Restart Tunnel"
-echo "3 - Stop Tunnel"
-echo "4 - Status"
-echo "5 - Exit"
-read -p "Choose: " CHOICE
-
-case $CHOICE in
-1) install_script ;;
-2) restart_tunnel ;;
-3) stop_tunnel ;;
-4) status_tunnel ;;
-5) exit ;;
-*) echo "Wrong option" ;;
-esac
-
-done
+echo "====================================="
+echo "Install Completed"
+echo "====================================="
